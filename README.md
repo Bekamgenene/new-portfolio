@@ -46,7 +46,7 @@ pnpm run dev -- --port 3001
 Open:
 
 - Main site: `http://localhost:3000` (or your custom port)
-- Admin panel: `http://localhost:3000/admin`
+- Admin panel: `http://localhost:3000`
 
 ## Build
 
@@ -58,7 +58,6 @@ If build fails on Google Fonts fetch in restricted networks, allow internet acce
 
 ## Validate Admin Upload Flows
 
-From `/admin`:
 
 1. Add/Edit a project and upload project image.
 2. Add/Edit a certificate and upload certificate image.
@@ -80,4 +79,3 @@ Set the same environment variables in your hosting provider:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_STORAGE_BUCKET` (if not default)
 
-Then deploy and verify uploads from `/admin`.
