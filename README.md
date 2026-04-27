@@ -79,5 +79,5 @@ Set the same environment variables in your hosting provider:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_STORAGE_BUCKET` (if not default)
 
-- here is my deployement  ** bekamgenene.vercel.app**
+- here is my deployement  **[ bekamgenene.vercel.app](https://bekamgenene.vercel.app)**
 
