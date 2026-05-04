@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Resend } from "resend";
 
 export const runtime = "nodejs";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
 
 type MessageRecord = {
   id: number;
@@ -40,9 +43,24 @@ async function supabaseFetch(path: string, init?: RequestInit) {
   });
 }
 
+function parseMessagesFromRow(row: Record<string, unknown>): MessageRecord[] {
+  if (Array.isArray(row.messages)) {
+    return row.messages as MessageRecord[];
+  }
+
+  if (row.contact && typeof row.contact === "object") {
+    const contact = row.contact as Record<string, unknown>;
+    if (Array.isArray(contact.messages)) {
+      return contact.messages as MessageRecord[];
+    }
+  }
+
+  return [];
+}
+
 async function loadMessages() {
   const response = await supabaseFetch(
-    "/rest/v1/portfolio_state?id=eq.1&select=messages",
+    "/rest/v1/portfolio_state?id=eq.1&select=*",
     { method: "GET" },
   );
 
@@ -50,8 +68,8 @@ async function loadMessages() {
     return [] as MessageRecord[];
   }
 
-  const rows = (await response.json()) as PortfolioState[];
-  return rows[0]?.messages || [];
+  const rows = (await response.json()) as Array<Record<string, unknown>>;
+  return parseMessagesFromRow(rows[0] || {});
 }
 
 async function saveMessages(messages: MessageRecord[]) {
@@ -68,16 +86,31 @@ async function saveMessages(messages: MessageRecord[]) {
     currentState = rows[0] || {};
   }
 
-  const nextState = {
+  const hasMessagesColumn = Object.prototype.hasOwnProperty.call(
+    currentState,
+    "messages",
+  );
+
+  const currentContact =
+    currentState.contact && typeof currentState.contact === "object"
+      ? (currentState.contact as Record<string, unknown>)
+      : {};
+
+  const nextContact = {
+    ...currentContact,
+    messages,
+  };
+
+  const nextState: Record<string, unknown> = {
     id: 1,
     updated_at: new Date().toISOString(),
     profile: currentState.profile || {},
-    contact: currentState.contact || {},
+    contact: nextContact,
     social: currentState.social || {},
     projects: currentState.projects || [],
     certificates: currentState.certificates || [],
     experiences: currentState.experiences || [],
-    messages,
+    ...(hasMessagesColumn ? { messages } : {}),
   };
 
   const upsertResponse = await supabaseFetch(
@@ -143,6 +176,29 @@ export async function POST(request: NextRequest) {
 
     const nextMessages = [nextMessage, ...messages];
     await saveMessages(nextMessages);
+
+    // Send email to admin
+    if (ADMIN_EMAIL && RESEND_API_KEY) {
+      const resend = new Resend(RESEND_API_KEY);
+      try {
+        await resend.emails.send({
+          from: "Portfolio Contact <onboarding@resend.dev>", // Use a verified domain or Resend's default
+          to: ADMIN_EMAIL,
+          subject: `New Contact Message from ${nextMessage.name}`,
+          html: `
+            <h2>New Message from Portfolio Contact Form</h2>
+            <p><strong>Name:</strong> ${nextMessage.name}</p>
+            <p><strong>Email:</strong> ${nextMessage.email}</p>
+            <p><strong>Message:</strong></p>
+            <p>${nextMessage.message.replace(/\n/g, "<br>")}</p>
+            <p><strong>Date:</strong> ${nextMessage.date}</p>
+          `,
+        });
+      } catch (emailError) {
+        console.error("Failed to send email:", emailError);
+        // Don't fail the request if email fails, just log it
+      }
+    }
 
     return NextResponse.json({ message: nextMessage }, { status: 201 });
   } catch (error) {

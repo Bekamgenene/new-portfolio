@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { defaultPortfolioState } from "@/lib/default-portfolio-state";
 
 export const runtime = "nodejs";
 
@@ -13,16 +14,6 @@ type PortfolioState = {
   certificates?: unknown[];
   experiences?: unknown[];
   messages?: unknown[];
-};
-
-const emptyState: PortfolioState = {
-  profile: {},
-  contact: {},
-  social: {},
-  projects: [],
-  certificates: [],
-  experiences: [],
-  messages: [],
 };
 
 async function supabaseFetch(path: string, init?: RequestInit) {
@@ -43,13 +34,17 @@ async function supabaseFetch(path: string, init?: RequestInit) {
 
 export async function GET() {
   try {
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+      return NextResponse.json(defaultPortfolioState, { status: 200 });
+    }
+
     const response = await supabaseFetch(
       "/rest/v1/portfolio_state?id=eq.1&select=*",
       { method: "GET" },
     );
 
     if (!response.ok) {
-      return NextResponse.json(emptyState, { status: 200 });
+      return NextResponse.json(defaultPortfolioState, { status: 200 });
     }
 
     const rows = (await response.json()) as Array<
@@ -57,23 +52,44 @@ export async function GET() {
     >;
     const row = rows[0];
 
-    return NextResponse.json(row ?? emptyState, { status: 200 });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to load portfolio state.",
-      },
-      { status: 500 },
-    );
+    if (
+      row &&
+      row.messages === undefined &&
+      row.contact?.messages !== undefined
+    ) {
+      row.messages = row.contact.messages as unknown[];
+    }
+
+    return NextResponse.json(row ?? defaultPortfolioState, { status: 200 });
+  } catch {
+    return NextResponse.json(defaultPortfolioState, { status: 200 });
   }
 }
 
 export async function PUT(request: NextRequest) {
   try {
     const incoming = (await request.json()) as PortfolioState;
+
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+      const fallbackState = {
+        ...defaultPortfolioState,
+        ...incoming,
+        profile: {
+          ...defaultPortfolioState.profile,
+          ...(incoming.profile || {}),
+        },
+        contact: {
+          ...defaultPortfolioState.contact,
+          ...(incoming.contact || {}),
+        },
+        social: {
+          ...defaultPortfolioState.social,
+          ...(incoming.social || {}),
+        },
+      };
+
+      return NextResponse.json(fallbackState, { status: 200 });
+    }
 
     const currentResponse = await supabaseFetch(
       "/rest/v1/portfolio_state?id=eq.1&select=*",
@@ -88,23 +104,38 @@ export async function PUT(request: NextRequest) {
       }
     }
 
-    const includeMessagesField =
-      incoming.messages !== undefined || currentState.messages !== undefined;
+    const hasMessagesColumn = Object.prototype.hasOwnProperty.call(
+      currentState,
+      "messages",
+    );
+
+    const currentContact =
+      (currentState.contact as Record<string, unknown>) || {};
+
+    const nextMessages =
+      incoming.messages ??
+      (hasMessagesColumn
+        ? (currentState.messages ??
+          (currentContact.messages as unknown[] | undefined) ??
+          [])
+        : ((currentContact.messages as unknown[] | undefined) ?? []));
+
+    const nextContact = {
+      ...currentContact,
+      ...(incoming.contact || {}),
+      messages: nextMessages,
+    };
 
     const nextState: PortfolioState & { id: number; updated_at: string } = {
       id: 1,
       updated_at: new Date().toISOString(),
       profile: { ...(currentState.profile || {}), ...(incoming.profile || {}) },
-      contact: { ...(currentState.contact || {}), ...(incoming.contact || {}) },
+      contact: nextContact,
       social: { ...(currentState.social || {}), ...(incoming.social || {}) },
       projects: incoming.projects ?? currentState.projects ?? [],
       certificates: incoming.certificates ?? currentState.certificates ?? [],
       experiences: incoming.experiences ?? currentState.experiences ?? [],
-      ...(includeMessagesField
-        ? {
-            messages: incoming.messages ?? currentState.messages ?? [],
-          }
-        : {}),
+      ...(hasMessagesColumn ? { messages: nextMessages } : {}),
     };
 
     const upsertResponse = await supabaseFetch(
